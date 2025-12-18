@@ -1,10 +1,25 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { checkHealth } from './api'
+import { googleLogout } from 'vue3-google-login'
+import { checkHealth, authenticateWithGoogle, type User } from './api'
 
 const backendStatus = ref<string>('Checking...')
 const isConnected = ref<boolean>(false)
 const isLoading = ref<boolean>(true)
+const user = ref<User | null>(null)
+const authError = ref<string>('')
+const isAuthenticating = ref<boolean>(false)
+
+const loadUserFromStorage = () => {
+  const stored = localStorage.getItem('user')
+  if (stored) {
+    try {
+      user.value = JSON.parse(stored)
+    } catch {
+      localStorage.removeItem('user')
+    }
+  }
+}
 
 const checkBackendHealth = async () => {
   isLoading.value = true
@@ -21,7 +36,35 @@ const checkBackendHealth = async () => {
   }
 }
 
+const handleGoogleLogin = async (response: { credential: string }) => {
+  authError.value = ''
+  isAuthenticating.value = true
+  
+  try {
+    const userData = await authenticateWithGoogle(response.credential)
+    user.value = userData
+    localStorage.setItem('user', JSON.stringify(userData))
+  } catch (error: unknown) {
+    console.error('Authentication failed:', error)
+    if (error && typeof error === 'object' && 'response' in error) {
+      const axiosError = error as { response?: { data?: { error?: string } } }
+      authError.value = axiosError.response?.data?.error || 'Authentication failed'
+    } else {
+      authError.value = 'Authentication failed. Please try again.'
+    }
+  } finally {
+    isAuthenticating.value = false
+  }
+}
+
+const handleLogout = () => {
+  googleLogout()
+  user.value = null
+  localStorage.removeItem('user')
+}
+
 onMounted(() => {
+  loadUserFromStorage()
   checkBackendHealth()
 })
 </script>
@@ -30,10 +73,37 @@ onMounted(() => {
   <div class="container">
     <header>
       <h1>GitHub Integration App</h1>
-      <p class="subtitle">Phase 0 - Infrastructure Setup</p>
+      <p class="subtitle">{{ user ? `Welcome, ${user.name}` : 'Sign in to get started' }}</p>
     </header>
     
     <main>
+      <div class="auth-card">
+        <template v-if="user">
+          <div class="user-info">
+            <div class="user-avatar">{{ user.name.charAt(0).toUpperCase() }}</div>
+            <div class="user-details">
+              <span class="user-name">{{ user.name }}</span>
+              <span class="user-email">{{ user.email }}</span>
+            </div>
+          </div>
+          <button @click="handleLogout" class="logout-btn">Sign Out</button>
+        </template>
+        
+        <template v-else>
+          <h2>Sign In</h2>
+          <p class="auth-description">Use your Google account to sign in</p>
+          
+          <div v-if="authError" class="error-message">{{ authError }}</div>
+          
+          <GoogleLogin
+            :callback="handleGoogleLogin"
+            :disabled="isAuthenticating"
+          />
+          
+          <p v-if="isAuthenticating" class="auth-status">Authenticating...</p>
+        </template>
+      </div>
+
       <div class="status-card">
         <h2>Backend Status</h2>
         <div class="status-indicator" :class="{ connected: isConnected, loading: isLoading }">
@@ -46,9 +116,9 @@ onMounted(() => {
       </div>
       
       <div class="info-section">
-        <h3>Next Steps (Coming Soon)</h3>
+        <h3>Next Steps</h3>
         <ul>
-          <li>Google OAuth Login</li>
+          <li :class="{ completed: !!user }">Google OAuth Login</li>
           <li>GitHub Account Linking</li>
           <li>Repository Selection</li>
           <li>Webhook Integration</li>
@@ -96,6 +166,94 @@ h1 {
 .subtitle {
   color: #8892b0;
   font-size: 1.1rem;
+}
+
+.auth-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  backdrop-filter: blur(10px);
+  text-align: center;
+}
+
+.auth-card h2 {
+  font-size: 1.3rem;
+  margin-bottom: 0.5rem;
+  color: #ccd6f6;
+}
+
+.auth-description {
+  color: #8892b0;
+  margin-bottom: 1.5rem;
+}
+
+.error-message {
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  color: #ff6b6b;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.auth-status {
+  color: #8892b0;
+  margin-top: 1rem;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  justify-content: center;
+}
+
+.user-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(90deg, #00d9ff, #00ff88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+.user-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.user-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #ccd6f6;
+}
+
+.user-email {
+  font-size: 0.9rem;
+  color: #8892b0;
+}
+
+.logout-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #8892b0;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.logout-btn:hover {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
 }
 
 .status-card {
@@ -202,5 +360,13 @@ h1 {
   left: 0;
   color: #64748b;
 }
-</style>
 
+.info-section li.completed {
+  color: #00ff88;
+}
+
+.info-section li.completed::before {
+  content: '●';
+  color: #00ff88;
+}
+</style>

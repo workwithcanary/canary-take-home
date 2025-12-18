@@ -69,6 +69,8 @@ htmlcov/
 .tox/
 
 # Secrets (keep .env.example, ignore actual .env)
+.env
+!.env.example
 backend/.env
 !backend/.env.example
 

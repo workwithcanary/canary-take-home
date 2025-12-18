@@ -43,6 +43,8 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    environment:
+      - VITE_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
     depends_on:
       - backend
     networks:
@@ -54,4 +56,3 @@ volumes:
 networks:
   app-network:
     driver: bridge
-
