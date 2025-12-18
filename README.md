@@ -1,45 +1,136 @@
-Technologies: Python, Django, Vue, REST APIs, GitHub, Webhooks.
+# GitHub Integration App
 
-Objective: Integrate GitHub with a Django and Vue application via the GitHub and Google REST API.
+A full-stack application integrating Django + DRF backend with Vue 3 + TypeScript frontend, using PostgreSQL for data persistence.
 
-Environment setup:
+## Project Overview
 
-Register an oauth application from your Github account
+- **Backend**: Django REST Framework API
+- **Frontend**: Vue 3 + TypeScript with Vite
+- **Database**: PostgreSQL
+- **Infrastructure**: Fully Dockerized with hot-reload support
 
-Use:
-  1. Django
-  2. PostgreSQL
-  3. Django ORM
-  4. Django Request Framework for API Requests to the front-end
-  5. Vue for a front end
+## Architecture
 
-Some tools that may be helpful:
+```
+.
+├── docker-compose.yml
+├── .gitignore
+├── backend/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── .env.example
+│   ├── manage.py
+│   ├── requirements.txt
+│   ├── config/
+│   │   ├── __init__.py
+│   │   ├── settings.py
+│   │   ├── urls.py
+│   │   └── wsgi.py
+│   └── core/
+│       ├── __init__.py
+│       ├── apps.py
+│       ├── models.py
+│       ├── urls.py
+│       └── views.py
+├── frontend/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── index.html
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── tsconfig.node.json
+│   ├── vite.config.ts
+│   └── src/
+│       ├── main.ts
+│       ├── App.vue
+│       ├── api.ts
+│       └── vite-env.d.ts
+└── README.md
+```
 
-https://github.com/guruahn/vue3-google-oauth2
+## Prerequisites
 
-Past this, it's all up to you. Considering time, I reccomend keeping most requests and logic on the front end and using the backend to store login and github credentials etc. 
+- [Docker](https://docs.docker.com/get-docker/) (v20.10+)
+- [Docker Compose](https://docs.docker.com/compose/install/) (v2.0+)
 
-Specifications - Start with the first and progress downwards. It should work out that way anyways.
+## Quick Start
 
-On the front end:
+1. **Clone the repository**
 
-1. I should be able to register as a user using Google OAuth and login to the application (don't worry too much about token auth, cookies, or state persistence for the login state). 
-3. After logging in, I should see a Link GitHub account button.
-    1. On clicking this, I should be asked to authorize your app to access my Github account. If you've never done this, it's a page hosted by GH, you don't need to build anything for the OAuth.
-5. Persist the logged in users Github OAuth credentials in the db.
-6. After I authorize, I should be provided with a list of my public repositories on Github and given an option to select one.
-7. Store this selection in the db.
+2. **Set up environment variables**
+   ```bash
+   cp backend/.env.example backend/.env
+   ```
 
-On the back-end:
-1. You should have DRF views for proxying the requests from your front-end application to the Google OAuth API, as well as GitHub API.
-2. Subscribe to webhook events for each repository found. Specifically we'd like to subscribe to: pull requests, merges, and code pushes.
-3. Create a view / endpoint to receive / parse webhook events, but do not actually implement the processing of these events. We are only looking for an endpoint that will receive these events, no action needs to be taken once received.
+3. **Start all services**
+   ```bash
+   docker compose up --build
+   ```
 
-You are free to integrate directly with the API or use any of the Google/Github python wrappers available. You can also use an OAuth provider plugin for the backend if you want to Oauth to the django application. Though, these decisions are up to you. 
+4. **Access the application**
+   - Frontend: http://localhost:5173
+   - Backend API: http://localhost:8000
+   - Health Check: http://localhost:8000/api/health/
 
-This is probably more than 4 to 5 hours of work, if you want to finish it out
-you're more than welcome, but don't fret about stopping at 3 or 4 hours. This is
-a basis of a conversation about how you went about this, the steps you tooks,
-the decisions you made etc.
+## Services
 
-Please create a public repo on your GH account and push this work to it. Email me when you are finished, we will schedule a time to touch base about it in the near future.
+| Service  | Port | Description               |
+|----------|------|---------------------------|
+| frontend | 5173 | Vue 3 + Vite dev server   |
+| backend  | 8000 | Django REST Framework API |
+| db       | 5432 | PostgreSQL database       |
+
+## Development
+
+### Hot Reload
+
+Both frontend and backend support hot reload via Docker volume mounts:
+
+- **Frontend**: Changes to files in `frontend/src/` are immediately reflected
+- **Backend**: Django's runserver watches for Python file changes
+
+### Running Migrations
+
+```bash
+docker compose exec backend python manage.py migrate
+```
+
+### Creating a Superuser
+
+```bash
+docker compose exec backend python manage.py createsuperuser
+```
+
+### Viewing Logs
+
+```bash
+docker compose logs -f
+docker compose logs -f backend
+```
+
+## API Endpoints
+
+### Health Check
+- **GET** `/api/health/`
+- Returns: `{ "status": "ok" }`
+
+## Environment Variables
+
+### Backend (`.env`)
+
+| Variable    | Description              | Default |
+|-------------|--------------------------|---------|
+| DEBUG       | Django debug mode (1=on) | 1       |
+| SECRET_KEY  | Django secret key        | -       |
+| DB_NAME     | PostgreSQL database name | app     |
+| DB_USER     | PostgreSQL username      | app     |
+| DB_PASSWORD | PostgreSQL password      | app     |
+| DB_HOST     | PostgreSQL host          | db      |
+| DB_PORT     | PostgreSQL port          | 5432    |
+
+## Next Steps
+
+- [ ] Google OAuth login
+- [ ] GitHub OAuth integration
+- [ ] Repository selection
+- [ ] Webhook subscriptions
