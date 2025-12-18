@@ -53,3 +53,19 @@ class GitHubRepository(models.Model):
 
     def __str__(self):
         return self.full_name
+
+
+class GitHubWebhook(models.Model):
+    repository = models.OneToOneField(
+        GitHubRepository,
+        on_delete=models.CASCADE,
+        related_name='webhook'
+    )
+    webhook_id = models.BigIntegerField(unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'github_webhooks'
+
+    def __str__(self):
+        return f'Webhook {self.webhook_id} for {self.repository.full_name}'

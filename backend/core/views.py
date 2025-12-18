@@ -1,11 +1,18 @@
 import os
+import hmac
+import hashlib
+import json
 import logging
 from urllib.parse import urlencode
 import requests
+from django.http import JsonResponse
+from django.views import View
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .models import AppUser, GitHubAccount, GitHubRepository
+from .models import AppUser, GitHubAccount, GitHubRepository, GitHubWebhook
 
 logger = logging.getLogger(__name__)
 
@@ -355,6 +362,10 @@ class GitHubRepoSelectView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
+        old_selected = user.github_repositories.filter(is_selected=True).first()
+        if old_selected and hasattr(old_selected, 'webhook'):
+            self._delete_webhook(github_account.access_token, old_selected)
+        
         user.github_repositories.update(is_selected=False)
         
         repo, created = GitHubRepository.objects.update_or_create(
@@ -368,6 +379,8 @@ class GitHubRepoSelectView(APIView):
             }
         )
         
+        webhook_result = self._create_webhook(github_account.access_token, repo)
+        
         logger.info(f'Repository selected for user {user.email}: {repo.full_name}')
         
         return Response({
@@ -375,6 +388,7 @@ class GitHubRepoSelectView(APIView):
             'name': repo.name,
             'full_name': repo.full_name,
             'html_url': repo.html_url,
+            'webhook_created': webhook_result is not None,
         })
     
     def _fetch_repo(self, access_token, repo_id):
@@ -394,3 +408,180 @@ class GitHubRepoSelectView(APIView):
         except requests.RequestException as e:
             logger.error(f'GitHub repo fetch error: {e}')
             return None
+    
+    def _create_webhook(self, access_token, repo):
+        webhook_secret = os.getenv('GITHUB_WEBHOOK_SECRET')
+        webhook_base_url = os.getenv('WEBHOOK_BASE_URL', 'http://localhost:8000')
+        
+        if not webhook_secret:
+            logger.warning('GITHUB_WEBHOOK_SECRET not configured, skipping webhook creation')
+            return None
+        
+        if hasattr(repo, 'webhook'):
+            logger.info(f'Webhook already exists for {repo.full_name}')
+            return repo.webhook
+        
+        webhook_url = f'{webhook_base_url}/api/github/webhooks/'
+        
+        try:
+            response = requests.post(
+                f'{GITHUB_API_URL}/repos/{repo.full_name}/hooks',
+                headers={
+                    'Authorization': f'Bearer {access_token}',
+                    'Accept': 'application/vnd.github.v3+json',
+                },
+                json={
+                    'name': 'web',
+                    'active': True,
+                    'events': ['push', 'pull_request'],
+                    'config': {
+                        'url': webhook_url,
+                        'content_type': 'json',
+                        'secret': webhook_secret,
+                    }
+                },
+                timeout=10
+            )
+            
+            if response.status_code == 201:
+                data = response.json()
+                webhook = GitHubWebhook.objects.create(
+                    repository=repo,
+                    webhook_id=data['id']
+                )
+                logger.info(f'Webhook created for {repo.full_name}: {webhook.webhook_id}')
+                return webhook
+            elif response.status_code == 422:
+                logger.warning(f'Webhook already exists on GitHub for {repo.full_name}')
+                return None
+            else:
+                logger.warning(f'Webhook creation failed: {response.status_code} - {response.text}')
+                return None
+        except requests.RequestException as e:
+            logger.error(f'Webhook creation error: {e}')
+            return None
+    
+    def _delete_webhook(self, access_token, repo):
+        if not hasattr(repo, 'webhook'):
+            return
+        
+        try:
+            response = requests.delete(
+                f'{GITHUB_API_URL}/repos/{repo.full_name}/hooks/{repo.webhook.webhook_id}',
+                headers={
+                    'Authorization': f'Bearer {access_token}',
+                    'Accept': 'application/vnd.github.v3+json',
+                },
+                timeout=10
+            )
+            
+            if response.status_code in (204, 404):
+                repo.webhook.delete()
+                logger.info(f'Webhook deleted for {repo.full_name}')
+            else:
+                logger.warning(f'Webhook deletion failed: {response.status_code}')
+        except requests.RequestException as e:
+            logger.error(f'Webhook deletion error: {e}')
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class GitHubWebhookReceiverView(View):
+    
+    def post(self, request):
+        signature = request.headers.get('X-Hub-Signature-256')
+        event_type = request.headers.get('X-GitHub-Event')
+        delivery_id = request.headers.get('X-GitHub-Delivery')
+        content_type = request.headers.get('Content-Type', '')
+        
+        raw_body = request.body
+        
+        logger.info(f'[WEBHOOK] Received request - event: {event_type}, delivery: {delivery_id}')
+        logger.info(f'[WEBHOOK] Content-Type: {content_type}')
+        logger.info(f'[WEBHOOK] Raw body length: {len(raw_body)} bytes')
+        
+        if not signature:
+            logger.warning('[WEBHOOK] Missing signature header')
+            return JsonResponse(
+                {'error': 'Missing signature'},
+                status=401
+            )
+        
+        if not self._verify_signature(raw_body, signature):
+            logger.warning(f'[WEBHOOK] Invalid signature for delivery {delivery_id}')
+            return JsonResponse(
+                {'error': 'Invalid signature'},
+                status=401
+            )
+        
+        logger.info('[WEBHOOK] Signature verified successfully')
+        
+        try:
+            if 'application/x-www-form-urlencoded' in content_type:
+                import urllib.parse
+                parsed = urllib.parse.parse_qs(raw_body.decode('utf-8'))
+                payload_str = parsed.get('payload', [''])[0]
+                if not payload_str:
+                    logger.warning('[WEBHOOK] No payload field in form data')
+                    return JsonResponse(
+                        {'error': 'Missing payload field'},
+                        status=400
+                    )
+                payload = json.loads(payload_str)
+                logger.info('[WEBHOOK] Parsed form-urlencoded payload')
+            else:
+                payload = json.loads(raw_body)
+                logger.info('[WEBHOOK] Parsed JSON payload')
+        except json.JSONDecodeError as e:
+            logger.warning(f'[WEBHOOK] JSON decode error: {e}')
+            logger.warning(f'[WEBHOOK] Raw body preview: {raw_body[:200]}')
+            return JsonResponse(
+                {'error': 'Invalid JSON'},
+                status=400
+            )
+        
+        repo_full_name = payload.get('repository', {}).get('full_name', 'unknown')
+        
+        if event_type == 'push':
+            ref = payload.get('ref', '')
+            commits_count = len(payload.get('commits', []))
+            pusher = payload.get('pusher', {}).get('name', 'unknown')
+            logger.info(f'[WEBHOOK] push to {repo_full_name} - ref: {ref}, commits: {commits_count}, by: {pusher}')
+        
+        elif event_type == 'pull_request':
+            action = payload.get('action', '')
+            pr_number = payload.get('number', '')
+            pr_title = payload.get('pull_request', {}).get('title', '')
+            merged = payload.get('pull_request', {}).get('merged', False)
+            
+            if action == 'closed' and merged:
+                logger.info(f'[WEBHOOK] pull_request MERGED on {repo_full_name} - #{pr_number}: {pr_title}')
+            else:
+                logger.info(f'[WEBHOOK] pull_request {action} on {repo_full_name} - #{pr_number}: {pr_title}')
+        
+        elif event_type == 'ping':
+            zen = payload.get('zen', '')
+            hook_id = payload.get('hook_id', '')
+            logger.info(f'[WEBHOOK] ping received for {repo_full_name} - hook_id: {hook_id}, zen: {zen}')
+        
+        else:
+            logger.info(f'[WEBHOOK] {event_type} received for {repo_full_name}')
+        
+        return JsonResponse({'status': 'received'}, status=200)
+    
+    def _verify_signature(self, payload_body, signature_header):
+        webhook_secret = os.getenv('GITHUB_WEBHOOK_SECRET')
+        
+        if not webhook_secret:
+            logger.error('GITHUB_WEBHOOK_SECRET not configured')
+            return False
+        
+        if not signature_header.startswith('sha256='):
+            return False
+        
+        expected_signature = 'sha256=' + hmac.new(
+            webhook_secret.encode('utf-8'),
+            payload_body,
+            hashlib.sha256
+        ).hexdigest()
+        
+        return hmac.compare_digest(expected_signature, signature_header)

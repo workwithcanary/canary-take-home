@@ -2,12 +2,12 @@
 
 A full-stack application integrating Django + DRF backend with Vue 3 + TypeScript frontend, using PostgreSQL for data persistence.
 
-## Current Status: Phase 2 Complete
+## Current Status: Phase 3 Complete
 
 - [x] Phase 0: Infrastructure (Docker, Django, Vue, PostgreSQL)
 - [x] Phase 1: Google OAuth Login
 - [x] Phase 2: GitHub OAuth & Repository Selection
-- [ ] Phase 3: Webhooks
+- [x] Phase 3: Webhook Subscription & Receiver
 
 ## Project Overview
 
@@ -15,6 +15,7 @@ A full-stack application integrating Django + DRF backend with Vue 3 + TypeScrip
 - **Frontend**: Vue 3 + TypeScript with Vite
 - **Database**: PostgreSQL
 - **Auth**: Google OAuth (login) + GitHub OAuth (account linking)
+- **Webhooks**: GitHub webhook subscription for push and pull_request events
 
 ## Prerequisites
 
@@ -61,6 +62,8 @@ A full-stack application integrating Django + DRF backend with Vue 3 + TypeScrip
    GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
    GITHUB_CLIENT_ID=your-github-client-id
    GITHUB_CLIENT_SECRET=your-github-client-secret
+   GITHUB_WEBHOOK_SECRET=your-webhook-secret
+   WEBHOOK_BASE_URL=https://your-public-url.ngrok.io
    ```
 
 3. **Add Google Client ID** to root `.env`:
@@ -122,45 +125,82 @@ A full-stack application integrating Django + DRF backend with Vue 3 + TypeScrip
 
 - **POST** `/api/github/repos/select/`
   - Request: `{ "user_id": 1, "repo_id": 123 }`
-  - Response: `{ "id": 123, "name": "repo", "full_name": "user/repo", "html_url": "..." }`
+  - Response: `{ "id": 123, "name": "repo", "full_name": "user/repo", "html_url": "...", "webhook_created": true }`
 
-## Auth Flows
+### GitHub Webhooks
+- **POST** `/api/github/webhooks/`
+  - Receives GitHub webhook events
+  - Validates `X-Hub-Signature-256` header
+  - Logs event summary
+  - Returns: `{ "status": "received" }`
 
-### Phase 1: Google OAuth
-```
-User clicks "Sign in with Google"
-         ↓
-Google OAuth popup
-         ↓
-Frontend receives ID token
-         ↓
-Backend verifies token, creates/updates user
-         ↓
-User logged in
-```
+## Webhooks (Phase 3)
 
-### Phase 2: GitHub OAuth
-```
-Logged-in user clicks "Link GitHub Account"
-         ↓
-Redirect to GitHub authorization page
-         ↓
-User authorizes, GitHub redirects back with code
-         ↓
-Frontend sends code to backend
-         ↓
-Backend exchanges code → access_token
-         ↓
-Backend fetches GitHub user profile
-         ↓
-Backend stores GitHubAccount linked to AppUser
-         ↓
-Frontend displays repositories
-         ↓
-User selects a repository
-         ↓
-Backend stores selection
-```
+### How Webhooks Work
+
+1. When a user selects a repository, the backend automatically creates a GitHub webhook
+2. The webhook subscribes to `push` and `pull_request` events
+3. GitHub sends events to `POST /api/github/webhooks/`
+4. The backend validates the signature and logs the event
+
+### Subscribed Events
+
+| Event | Description |
+|-------|-------------|
+| `push` | Triggered on git push to any branch |
+| `pull_request` | Triggered on PR open, close, merge, etc. |
+
+> **Note**: There is no separate "merge" event in GitHub. Merges are detected via `pull_request` events where `action=closed` and `merged=true`.
+
+### Event Processing
+
+⚠️ **Events are NOT processed** — they are only:
+- Validated (signature check)
+- Parsed (extract event type and summary)
+- Logged
+- Acknowledged (200 OK)
+
+This is intentional for Phase 3. Event processing would be added in a future phase.
+
+### Local Testing with ngrok
+
+GitHub webhooks require a publicly accessible URL. For local development:
+
+1. **Install ngrok**
+   ```bash
+   # macOS
+   brew install ngrok
+   
+   # Or download from https://ngrok.com/download
+   ```
+
+2. **Start ngrok tunnel**
+   ```bash
+   ngrok http 8000
+   ```
+
+3. **Copy the HTTPS URL** (e.g., `https://abc123.ngrok.io`)
+
+4. **Update `backend/.env`**
+   ```bash
+   WEBHOOK_BASE_URL=https://abc123.ngrok.io
+   ```
+
+5. **Restart the backend**
+   ```bash
+   docker compose restart backend
+   ```
+
+6. **Select a repository** — the webhook will be created with the ngrok URL
+
+### Webhook Signature Validation
+
+All incoming webhooks are validated using HMAC SHA-256:
+
+1. GitHub signs the payload with your `GITHUB_WEBHOOK_SECRET`
+2. The signature is sent in `X-Hub-Signature-256` header
+3. Backend recomputes the signature and compares
+4. Invalid signatures return `401 Unauthorized`
 
 ## Environment Variables
 
@@ -172,18 +212,20 @@ Backend stores selection
 
 ### Backend (`backend/.env`)
 
-| Variable             | Description                | Required |
-|----------------------|----------------------------|----------|
-| DEBUG                | Django debug mode (1=on)   | No       |
-| SECRET_KEY           | Django secret key          | Yes      |
-| DB_NAME              | PostgreSQL database name   | No       |
-| DB_USER              | PostgreSQL username        | No       |
-| DB_PASSWORD          | PostgreSQL password        | No       |
-| DB_HOST              | PostgreSQL host            | No       |
-| DB_PORT              | PostgreSQL port            | No       |
-| GOOGLE_CLIENT_ID     | Google OAuth Client ID     | Yes      |
-| GITHUB_CLIENT_ID     | GitHub OAuth Client ID     | Yes      |
-| GITHUB_CLIENT_SECRET | GitHub OAuth Client Secret | Yes      |
+| Variable              | Description                   | Required |
+|-----------------------|-------------------------------|----------|
+| DEBUG                 | Django debug mode (1=on)      | No       |
+| SECRET_KEY            | Django secret key             | Yes      |
+| DB_NAME               | PostgreSQL database name      | No       |
+| DB_USER               | PostgreSQL username           | No       |
+| DB_PASSWORD           | PostgreSQL password           | No       |
+| DB_HOST               | PostgreSQL host               | No       |
+| DB_PORT               | PostgreSQL port               | No       |
+| GOOGLE_CLIENT_ID      | Google OAuth Client ID        | Yes      |
+| GITHUB_CLIENT_ID      | GitHub OAuth Client ID        | Yes      |
+| GITHUB_CLIENT_SECRET  | GitHub OAuth Client Secret    | Yes      |
+| GITHUB_WEBHOOK_SECRET | Secret for webhook signatures | Yes      |
+| WEBHOOK_BASE_URL      | Public URL for webhooks       | Yes      |
 
 ## Database Schema
 
@@ -220,6 +262,14 @@ Backend stores selection
 | is_selected | Boolean     | Whether this repo is selected  |
 | created_at  | DateTime    | Record creation time           |
 
+### GitHubWebhook
+| Field       | Type        | Description                    |
+|-------------|-------------|--------------------------------|
+| id          | BigInt (PK) | Auto-generated ID              |
+| repository  | FK (1:1)    | Reference to GitHubRepository  |
+| webhook_id  | BigInt (UK) | GitHub-assigned webhook ID     |
+| created_at  | DateTime    | Record creation time           |
+
 ## Development
 
 ### Running Migrations
@@ -241,6 +291,16 @@ docker compose logs -f backend
 docker compose up --build
 ```
 
+### Testing Webhooks Locally
+
+```bash
+# Terminal 1: Start ngrok
+ngrok http 8000
+
+# Terminal 2: Watch backend logs for webhook events
+docker compose logs -f backend | grep WEBHOOK
+```
+
 ## Architecture
 
 ```
@@ -258,9 +318,9 @@ docker compose up --build
 │   │   ├── urls.py
 │   │   └── wsgi.py
 │   └── core/
-│       ├── models.py      # AppUser, GitHubAccount, GitHubRepository
+│       ├── models.py      # AppUser, GitHubAccount, GitHubRepository, GitHubWebhook
 │       ├── urls.py
-│       └── views.py       # Auth & GitHub API views
+│       └── views.py       # Auth, GitHub API, Webhook views
 ├── frontend/
 │   ├── Dockerfile
 │   ├── package.json
@@ -272,6 +332,11 @@ docker compose up --build
 └── README.md
 ```
 
-## Next Steps
+## Project Complete
 
-- [ ] Webhook subscriptions (Phase 3)
+All phases implemented:
+
+1. ✅ **Phase 0**: Docker infrastructure with Django, Vue, PostgreSQL
+2. ✅ **Phase 1**: Google OAuth login with user persistence
+3. ✅ **Phase 2**: GitHub OAuth account linking and repository selection
+4. ✅ **Phase 3**: GitHub webhook subscription and receiver (no event processing)
