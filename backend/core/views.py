@@ -716,8 +716,19 @@ class GitHubWebhookEventsView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class GitHubWebhookReceiverView(View):
+    """
+    Receives incoming webhook events from GitHub.
+    
+    Security: Uses HMAC-SHA256 signature validation.
+    Storage: Raw payloads stored idempotently by delivery_id.
+    Processing: None - events are logged and acknowledged only.
+    """
     
     def post(self, request):
+        """
+        Receives webhook events from GitHub.
+        Validates signature, parses payload, stores event, returns 200 immediately.
+        """
         signature = request.headers.get('X-Hub-Signature-256')
         event_type = request.headers.get('X-GitHub-Event')
         delivery_id = request.headers.get('X-GitHub-Delivery')
@@ -725,49 +736,31 @@ class GitHubWebhookReceiverView(View):
         
         raw_body = request.body
         
-        logger.info(f'[WEBHOOK] Received request - event: {event_type}, delivery: {delivery_id}')
-        logger.info(f'[WEBHOOK] Content-Type: {content_type}')
-        logger.info(f'[WEBHOOK] Raw body length: {len(raw_body)} bytes')
+        logger.info(f'[WEBHOOK] {event_type} received, delivery: {delivery_id}')
         
+        # Signature validation is mandatory
         if not signature:
-            logger.warning('[WEBHOOK] Missing signature header')
-            return JsonResponse(
-                {'error': 'Missing signature'},
-                status=401
-            )
+            logger.warning('[WEBHOOK] Missing signature')
+            return JsonResponse({'error': 'Missing signature'}, status=401)
         
         if not self._verify_signature(raw_body, signature):
-            logger.warning(f'[WEBHOOK] Invalid signature for delivery {delivery_id}')
-            return JsonResponse(
-                {'error': 'Invalid signature'},
-                status=401
-            )
+            logger.warning(f'[WEBHOOK] Invalid signature for {delivery_id}')
+            return JsonResponse({'error': 'Invalid signature'}, status=401)
         
-        logger.info('[WEBHOOK] Signature verified successfully')
-        
+        # Parse payload (handle both JSON and form-urlencoded)
         try:
             if 'application/x-www-form-urlencoded' in content_type:
                 import urllib.parse
                 parsed = urllib.parse.parse_qs(raw_body.decode('utf-8'))
                 payload_str = parsed.get('payload', [''])[0]
                 if not payload_str:
-                    logger.warning('[WEBHOOK] No payload field in form data')
-                    return JsonResponse(
-                        {'error': 'Missing payload field'},
-                        status=400
-                    )
+                    return JsonResponse({'error': 'Missing payload field'}, status=400)
                 payload = json.loads(payload_str)
-                logger.info('[WEBHOOK] Parsed form-urlencoded payload')
             else:
                 payload = json.loads(raw_body)
-                logger.info('[WEBHOOK] Parsed JSON payload')
         except json.JSONDecodeError as e:
-            logger.warning(f'[WEBHOOK] JSON decode error: {e}')
-            logger.warning(f'[WEBHOOK] Raw body preview: {raw_body[:200]}')
-            return JsonResponse(
-                {'error': 'Invalid JSON'},
-                status=400
-            )
+            logger.warning(f'[WEBHOOK] Invalid JSON: {e}')
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
         
         repo_full_name = payload.get('repository', {}).get('full_name', 'unknown')
         repo_id = payload.get('repository', {}).get('id')

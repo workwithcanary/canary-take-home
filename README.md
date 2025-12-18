@@ -1,393 +1,247 @@
 # GitHub Integration App
 
-A full-stack application integrating Django + DRF backend with Vue 3 + TypeScript frontend, using PostgreSQL for data persistence.
-
-## Current Status: Phase 4 Complete
-
-- [x] Phase 0: Infrastructure (Docker, Django, Vue, PostgreSQL)
-- [x] Phase 1: Google OAuth Login
-- [x] Phase 2: GitHub OAuth & Repository Selection
-- [x] Phase 3: Webhook Subscription & Receiver
-- [x] Phase 4: OAuth Scope Upgrade, Webhook Management & Event Visibility
-
-## Project Overview
-
-- **Backend**: Django REST Framework API
-- **Frontend**: Vue 3 + TypeScript with Vite
-- **Database**: PostgreSQL
-- **Auth**: Google OAuth (login) + GitHub OAuth (account linking)
-- **Webhooks**: GitHub webhook subscription with raw event storage and visibility
-
-## Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/) (v20.10+)
-- [Docker Compose](https://docs.docker.com/compose/install/) (v2.0+)
-- Google Cloud Console project with OAuth 2.0 credentials
-- GitHub OAuth App
-
-## Google OAuth Setup
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing
-3. Navigate to **APIs & Services** → **Credentials**
-4. Click **Create Credentials** → **OAuth client ID**
-5. Select **Web application**
-6. Add authorized JavaScript origins:
-   - `http://localhost:5173`
-7. Add authorized redirect URIs:
-   - `http://localhost:5173`
-8. Copy the **Client ID**
-
-## GitHub OAuth Setup
-
-1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
-2. Click **New OAuth App**
-3. Fill in the form:
-   - **Application name**: Your app name
-   - **Homepage URL**: `http://localhost:5173`
-   - **Authorization callback URL**: `http://localhost:5173/auth/github/callback`
-4. Click **Register application**
-5. Copy the **Client ID**
-6. Generate and copy a **Client Secret**
-
-### Required OAuth Scopes
-
-The application requests the following scopes during GitHub OAuth:
-
-| Scope | Purpose |
-|-------|---------|
-| `read:user` | Fetch GitHub user profile (username, ID) |
-| `repo` | Access repository metadata and list repositories |
-| `admin:repo_hook` | Create, read, and delete webhooks on repositories |
-
-### Re-authorization Flow
-
-If a user linked their GitHub account before the webhook scope was added, they may be missing the `admin:repo_hook` scope. The UI will:
-
-1. Detect the missing scope
-2. Display a warning message
-3. Provide a "Re-authorize GitHub" button
-4. Redirect through OAuth with `prompt=consent` to force scope re-approval
-
-This ensures users always have the permissions needed for full functionality.
+Full-stack webhook integration demo: Django + DRF backend, Vue 3 + TypeScript frontend, PostgreSQL.
 
 ## Quick Start
 
-1. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   cp backend/.env.example backend/.env
-   ```
-
-2. **Add your credentials** to `backend/.env`:
-   ```bash
-   GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
-   GITHUB_CLIENT_ID=your-github-client-id
-   GITHUB_CLIENT_SECRET=your-github-client-secret
-   GITHUB_WEBHOOK_SECRET=your-webhook-secret
-   WEBHOOK_BASE_URL=https://your-public-url.ngrok.io
-   ```
-
-3. **Add Google Client ID** to root `.env`:
-   ```bash
-   GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
-   ```
-
-4. **Run database migrations**
-   ```bash
-   docker compose up -d db
-   docker compose run --rm backend python manage.py migrate
-   ```
-
-5. **Start all services**
-   ```bash
-   docker compose up --build
-   ```
-
-6. **Access the application**
-   - Frontend: http://localhost:5173
-   - Backend API: http://localhost:8000
-
-## Services
-
-| Service  | Port | Description               |
-|----------|------|---------------------------|
-| frontend | 5173 | Vue 3 + Vite dev server   |
-| backend  | 8000 | Django REST Framework API |
-| db       | 5432 | PostgreSQL database       |
-
-## API Endpoints
-
-### Health Check
-- **GET** `/api/health/`
-- Returns: `{ "status": "ok" }`
-
-### Google Authentication
-- **POST** `/api/auth/google/`
-- Request: `{ "id_token": "google-id-token" }`
-- Response: `{ "id": 1, "email": "user@gmail.com", "name": "User Name" }`
-
-### GitHub OAuth
-- **GET** `/api/github/oauth/url/`
-  - Query: `?user_id=1` or `?user_id=1&force_reauth=true`
-  - Use `force_reauth=true` to force re-authorization with new scopes
-  - Returns: `{ "url": "https://github.com/login/oauth/authorize?..." }`
-
-- **POST** `/api/github/oauth/callback/`
-  - Request: `{ "code": "github-code", "user_id": 1 }`
-  - Response: `{ "username": "octocat", "github_user_id": 123, "scopes": [...], "has_webhook_scope": true }`
-
-- **GET** `/api/github/status/`
-  - Query: `?user_id=1`
-  - Response: `{ "linked": true, "username": "octocat", "scopes": [...], "has_webhook_scope": true, "selected_repo": {...} }`
-
-### GitHub Repositories
-- **GET** `/api/github/repos/`
-  - Query: `?user_id=1`
-  - Response: `{ "repos": [{ "id": 123, "name": "repo", "full_name": "user/repo", ... }] }`
-
-- **POST** `/api/github/repos/select/`
-  - Request: `{ "user_id": 1, "repo_id": 123 }`
-  - Response: `{ "id": 123, "name": "repo", "full_name": "user/repo", "html_url": "...", "webhook_created": true }`
-
-### GitHub Webhooks
-- **POST** `/api/github/webhooks/setup/`
-  - Request: `{ "user_id": 1 }`
-  - Creates or reuses a webhook for the selected repository
-  - Returns `403` if missing `admin:repo_hook` scope
-  - Response: `{ "status": "created|exists|reused", "webhook_id": 123, "message": "..." }`
-
-- **GET** `/api/github/webhooks/events/`
-  - Query: `?user_id=1`
-  - Returns raw webhook events for the selected repository
-  - Response: `{ "events": [{ "id": 1, "event_type": "push", "delivery_id": "...", "payload": {...}, "received_at": "..." }] }`
-
-- **POST** `/api/github/webhooks/`
-  - Receives GitHub webhook events (external endpoint)
-  - Validates `X-Hub-Signature-256` header
-  - Stores raw payload in database (idempotent by delivery_id)
-  - Returns: `{ "status": "received" }`
-
-## Webhooks (Phase 3)
-
-### How Webhooks Work
-
-1. When a user selects a repository, the backend automatically creates a GitHub webhook
-2. The webhook subscribes to `push` and `pull_request` events
-3. GitHub sends events to `POST /api/github/webhooks/`
-4. The backend validates the signature and logs the event
-
-### Subscribed Events
-
-| Event | Description |
-|-------|-------------|
-| `push` | Triggered on git push to any branch |
-| `pull_request` | Triggered on PR open, close, merge, etc. |
-
-> **Note**: There is no separate "merge" event in GitHub. Merges are detected via `pull_request` events where `action=closed` and `merged=true`.
-
-### Event Storage & Processing
-
-⚠️ **Events are stored but NOT processed** — they are:
-- Validated (signature check)
-- Parsed (extract event type and summary)
-- Stored as raw JSON in the database
-- Logged
-- Acknowledged (200 OK)
-
-**Why events are not processed:**
-- This application demonstrates webhook integration, not business logic
-- Raw event storage allows future flexibility
-- Processing would require background jobs and additional infrastructure
-- The focus is on correct integration: OAuth scopes, signature validation, idempotent storage
-
-### Local Testing with ngrok
-
-GitHub webhooks require a publicly accessible URL. For local development:
-
-1. **Install ngrok**
-   ```bash
-   # macOS
-   brew install ngrok
-   
-   # Or download from https://ngrok.com/download
-   ```
-
-2. **Start ngrok tunnel**
-   ```bash
-   ngrok http 8000
-   ```
-
-3. **Copy the HTTPS URL** (e.g., `https://abc123.ngrok.io`)
-
-4. **Update `backend/.env`**
-   ```bash
-   WEBHOOK_BASE_URL=https://abc123.ngrok.io
-   ```
-
-5. **Restart the backend**
-   ```bash
-   docker compose restart backend
-   ```
-
-6. **Select a repository** — the webhook will be created with the ngrok URL
-
-### Webhook Signature Validation
-
-All incoming webhooks are validated using HMAC SHA-256:
-
-1. GitHub signs the payload with your `GITHUB_WEBHOOK_SECRET`
-2. The signature is sent in `X-Hub-Signature-256` header
-3. Backend recomputes the signature and compares
-4. Invalid signatures return `401 Unauthorized`
-
-## Environment Variables
-
-### Root (`.env`)
-
-| Variable         | Description                        | Required |
-|------------------|------------------------------------|----------|
-| GOOGLE_CLIENT_ID | Google OAuth Client ID (frontend)  | Yes      |
-
-### Backend (`backend/.env`)
-
-| Variable              | Description                   | Required |
-|-----------------------|-------------------------------|----------|
-| DEBUG                 | Django debug mode (1=on)      | No       |
-| SECRET_KEY            | Django secret key             | Yes      |
-| DB_NAME               | PostgreSQL database name      | No       |
-| DB_USER               | PostgreSQL username           | No       |
-| DB_PASSWORD           | PostgreSQL password           | No       |
-| DB_HOST               | PostgreSQL host               | No       |
-| DB_PORT               | PostgreSQL port               | No       |
-| GOOGLE_CLIENT_ID      | Google OAuth Client ID        | Yes      |
-| GITHUB_CLIENT_ID      | GitHub OAuth Client ID        | Yes      |
-| GITHUB_CLIENT_SECRET  | GitHub OAuth Client Secret    | Yes      |
-| GITHUB_WEBHOOK_SECRET | Secret for webhook signatures | Yes      |
-| WEBHOOK_BASE_URL      | Public URL for webhooks       | Yes      |
-
-## Database Schema
-
-### AppUser
-| Field      | Type         | Description              |
-|------------|--------------|--------------------------|
-| id         | BigInt (PK)  | Auto-generated ID        |
-| google_sub | String (UK)  | Google's unique user ID  |
-| email      | String       | User's email             |
-| name       | String       | User's display name      |
-| created_at | DateTime     | Record creation time     |
-| updated_at | DateTime     | Last update time         |
-
-### GitHubAccount
-| Field          | Type        | Description                 |
-|----------------|-------------|-----------------------------|
-| id             | BigInt (PK) | Auto-generated ID           |
-| user           | FK (1:1)    | Reference to AppUser        |
-| github_user_id | BigInt (UK) | GitHub's user ID            |
-| username       | String      | GitHub username             |
-| access_token   | String      | OAuth access token (secret) |
-| scopes         | JSON Array  | Granted OAuth scopes        |
-| created_at     | DateTime    | Record creation time        |
-| updated_at     | DateTime    | Last update time            |
-
-### GitHubRepository
-| Field       | Type        | Description                    |
-|-------------|-------------|--------------------------------|
-| id          | BigInt (PK) | Auto-generated ID              |
-| user        | FK          | Reference to AppUser           |
-| repo_id     | BigInt      | GitHub's repository ID         |
-| name        | String      | Repository name                |
-| full_name   | String      | Full name (owner/repo)         |
-| html_url    | URL         | GitHub URL                     |
-| is_selected | Boolean     | Whether this repo is selected  |
-| created_at  | DateTime    | Record creation time           |
-
-### GitHubWebhook
-| Field       | Type        | Description                    |
-|-------------|-------------|--------------------------------|
-| id          | BigInt (PK) | Auto-generated ID              |
-| repository  | FK (1:1)    | Reference to GitHubRepository  |
-| webhook_id  | BigInt (UK) | GitHub-assigned webhook ID     |
-| created_at  | DateTime    | Record creation time           |
-
-### GitHubWebhookEvent
-| Field       | Type         | Description                    |
-|-------------|--------------|--------------------------------|
-| id          | BigInt (PK)  | Auto-generated ID              |
-| repository  | FK           | Reference to GitHubRepository  |
-| event_type  | String       | GitHub event type (push, etc)  |
-| delivery_id | String (UK)  | GitHub delivery ID (unique)    |
-| payload     | JSON         | Raw event payload from GitHub  |
-| received_at | DateTime     | When event was received        |
-
-## Development
-
-### Running Migrations
-
 ```bash
-docker compose exec backend python manage.py migrate
-```
+# 1. Set up environment files
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
 
-### Viewing Logs
+# 2. Edit both .env files with your credentials (see Environment Variables section)
 
-```bash
-docker compose logs -f
-docker compose logs -f backend
-```
-
-### Rebuilding After Changes
-
-```bash
+# 3. Start services
 docker compose up --build
-```
 
-### Testing Webhooks Locally
-
-```bash
-# Terminal 1: Start ngrok
-ngrok http 8000
-
-# Terminal 2: Watch backend logs for webhook events
-docker compose logs -f backend | grep WEBHOOK
+# 4. Open http://localhost:5173
 ```
 
 ## Architecture
 
 ```
-.
-├── docker-compose.yml
-├── .env.example
-├── .gitignore
-├── backend/
-│   ├── Dockerfile
-│   ├── .env.example
-│   ├── manage.py
-│   ├── requirements.txt
-│   ├── config/
-│   │   ├── settings.py
-│   │   ├── urls.py
-│   │   └── wsgi.py
-│   └── core/
-│       ├── models.py      # AppUser, GitHubAccount, GitHubRepository, GitHubWebhook, GitHubWebhookEvent
-│       ├── urls.py
-│       └── views.py       # Auth, GitHub API, Webhook views
-├── frontend/
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── vite.config.ts
-│   └── src/
-│       ├── main.ts        # Vue app + Google OAuth plugin
-│       ├── App.vue        # Login + GitHub UI
-│       └── api.ts         # API client
-└── README.md
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Frontend      │────▶│   Backend       │────▶│   PostgreSQL    │
+│   Vue 3 + TS    │     │   Django + DRF  │     │                 │
+│   :5173         │     │   :8000         │     │   :5432         │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+        │                       │
+        │                       │
+        ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐
+│  Google OAuth   │     │  GitHub API     │
+│  (login)        │     │  (OAuth+Webhooks)│
+└─────────────────┘     └─────────────────┘
 ```
 
-## Project Complete
+### Why These Choices
 
-All phases implemented:
+| Choice | Rationale |
+|--------|-----------|
+| **Django + DRF** | Battle-tested, excellent ORM, fast API development |
+| **Vue 3 + TypeScript** | Reactive UI, type safety, single-file components |
+| **Frontend-first OAuth** | Google SDK handles popup/redirect, backend validates tokens |
+| **User-triggered webhooks** | Explicit control, clear scope requirements, no background magic |
+| **Raw payload storage** | Maximum flexibility, no data loss, easy debugging |
 
-1. ✅ **Phase 0**: Docker infrastructure with Django, Vue, PostgreSQL
-2. ✅ **Phase 1**: Google OAuth login with user persistence
-3. ✅ **Phase 2**: GitHub OAuth account linking and repository selection
-4. ✅ **Phase 3**: GitHub webhook subscription and receiver
-5. ✅ **Phase 4**: OAuth scope upgrade, webhook management UI, and raw event visibility
+### Data Flow
+
+1. **Login**: Frontend uses Google SDK → Backend validates token → Creates/updates AppUser
+2. **GitHub Link**: Frontend redirects to GitHub → Backend exchanges code → Stores scopes + token
+3. **Webhook Setup**: User clicks "Setup Webhook" → Backend creates webhook via GitHub API
+4. **Event Receipt**: GitHub POSTs to `/api/github/webhooks/` → Backend validates signature → Stores raw payload
+
+## Environment Variables
+
+Each service has its own `.env` file. No root `.env` needed.
+
+### Backend (`backend/.env`)
+
+```bash
+# Django
+DEBUG=1
+SECRET_KEY=change-me-in-production
+
+# Database (must match docker-compose db service defaults)
+DB_NAME=app
+DB_USER=app
+DB_PASSWORD=app
+DB_HOST=db
+DB_PORT=5432
+
+# Google OAuth (for server-side token validation)
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+
+# GitHub OAuth
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret
+
+# Webhooks
+GITHUB_WEBHOOK_SECRET=any-random-string
+WEBHOOK_BASE_URL=http://localhost:8000
+```
+
+### Frontend (`frontend/.env`)
+
+```bash
+# Google OAuth (for browser-side Sign-In button)
+VITE_GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+```
+
+> **Note**: `VITE_*` variables are exposed to the browser. Never put secrets here.
+> 
+> For webhook testing, set `WEBHOOK_BASE_URL` in backend/.env to your ngrok URL.
+
+## Testing
+
+### Run Unit Tests
+
+```bash
+docker compose exec backend pytest core/tests.py -v
+```
+
+Tests cover:
+- Google OAuth: token validation, user creation/update
+- GitHub OAuth: code exchange, scope persistence
+- Webhook receiver: signature validation, duplicate handling, event storage
+- Webhook setup: scope checks, reuse/create logic
+
+### Test Webhooks Locally
+
+1. Start a tunnel:
+   ```bash
+   ngrok http 8000
+   # or
+   cloudflared tunnel --url http://localhost:8000
+   ```
+
+2. Update `WEBHOOK_BASE_URL` in `backend/.env`:
+   ```bash
+   WEBHOOK_BASE_URL=https://abc123.ngrok.io
+   ```
+
+3. Restart backend:
+   ```bash
+   docker compose restart backend
+   ```
+
+4. Select a repository → webhook created with public URL
+
+5. Push to your repo → events appear in the UI
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health/` | GET | Health check |
+| `/api/auth/google/` | POST | Google token validation |
+| `/api/github/oauth/url/` | GET | Get GitHub OAuth URL |
+| `/api/github/oauth/callback/` | POST | Exchange code for token |
+| `/api/github/status/` | GET | Get link status + scopes |
+| `/api/github/repos/` | GET | List public repos |
+| `/api/github/repos/select/` | POST | Select a repository |
+| `/api/github/webhooks/setup/` | POST | Create/reuse webhook |
+| `/api/github/webhooks/events/` | GET | List stored events |
+| `/api/github/webhooks/` | POST | Webhook receiver (GitHub calls this) |
+
+## Tradeoffs & Intentional Limitations
+
+| What | Why |
+|------|-----|
+| **No background jobs** | Keeps infrastructure simple; webhook receiver is synchronous |
+| **No event processing** | Demonstrates integration, not business logic |
+| **No JWT/session auth** | Stateless design; user_id passed per request for simplicity |
+| **No GitHub App** | OAuth App is simpler for this use case |
+| **No private repos** | Would require additional scopes and consent handling |
+| **Raw payload storage** | No derived fields—preserves all data for future use |
+
+### Why No Merge Event?
+
+GitHub doesn't have a separate `merge` event. Merges are detected via:
+```
+pull_request event where action=closed AND merged=true
+```
+
+### Why Signature Validation Matters
+
+Without signature validation, anyone could POST fake events to your endpoint. The HMAC-SHA256 signature proves the payload came from GitHub.
+
+## Future Improvements
+
+If this were a production system:
+
+1. **Event Processing Queue**
+   - Celery/SQS for async processing
+   - Idempotent consumers keyed by delivery_id
+   - Retry with exponential backoff
+
+2. **Auth Improvements**
+   - JWT tokens with refresh
+   - Session management
+   - CSRF protection for sensitive endpoints
+
+3. **Webhook Resilience**
+   - Dead letter queue for failed processing
+   - Event replay capability
+   - Rate limiting
+
+4. **GitHub App Migration**
+   - Installation-based auth
+   - Fine-grained permissions
+   - Multiple repos per installation
+
+5. **Observability**
+   - Structured logging
+   - Metrics (Prometheus)
+   - Distributed tracing
+
+## Project Structure
+
+```
+.
+├── docker-compose.yml
+├── backend/
+│   ├── .env.example      # Backend env template
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── pytest.ini
+│   ├── config/
+│   │   └── settings.py
+│   └── core/
+│       ├── models.py     # AppUser, GitHubAccount, GitHubRepository, GitHubWebhook, GitHubWebhookEvent
+│       ├── views.py      # All API views
+│       ├── urls.py
+│       └── tests.py      # Unit tests
+└── frontend/
+    ├── .env.example      # Frontend env template (VITE_* only)
+    ├── Dockerfile
+    └── src/
+        ├── App.vue       # Main UI
+        └── api.ts        # API client
+```
+
+## OAuth Setup
+
+### Google
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
+2. Create OAuth 2.0 Client ID (Web application)
+3. Authorized JavaScript origins: `http://localhost:5173`
+4. Copy Client ID
+
+### GitHub
+
+1. [GitHub Developer Settings](https://github.com/settings/developers) → New OAuth App
+2. Homepage URL: `http://localhost:5173`
+3. Callback URL: `http://localhost:5173/auth/github/callback`
+4. Copy Client ID and generate Client Secret
+
+### Required GitHub Scopes
+
+| Scope | Purpose |
+|-------|---------|
+| `read:user` | Fetch profile |
+| `repo` | List repositories |
+| `admin:repo_hook` | Manage webhooks |
+
+Users missing `admin:repo_hook` see a re-authorization prompt.
