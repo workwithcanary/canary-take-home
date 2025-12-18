@@ -24,6 +24,7 @@ class GitHubAccount(models.Model):
     github_user_id = models.BigIntegerField(unique=True)
     username = models.CharField(max_length=255)
     access_token = models.CharField(max_length=255)
+    scopes = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -32,6 +33,9 @@ class GitHubAccount(models.Model):
 
     def __str__(self):
         return self.username
+
+    def has_webhook_scope(self):
+        return 'admin:repo_hook' in self.scopes
 
 
 class GitHubRepository(models.Model):
@@ -69,3 +73,22 @@ class GitHubWebhook(models.Model):
 
     def __str__(self):
         return f'Webhook {self.webhook_id} for {self.repository.full_name}'
+
+
+class GitHubWebhookEvent(models.Model):
+    repository = models.ForeignKey(
+        GitHubRepository,
+        on_delete=models.CASCADE,
+        related_name='webhook_events'
+    )
+    event_type = models.CharField(max_length=100)
+    delivery_id = models.CharField(max_length=100, unique=True)
+    payload = models.JSONField()
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'github_webhook_events'
+        ordering = ['-received_at']
+
+    def __str__(self):
+        return f'{self.event_type} for {self.repository.full_name} at {self.received_at}'

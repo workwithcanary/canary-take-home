@@ -2,12 +2,13 @@
 
 A full-stack application integrating Django + DRF backend with Vue 3 + TypeScript frontend, using PostgreSQL for data persistence.
 
-## Current Status: Phase 3 Complete
+## Current Status: Phase 4 Complete
 
 - [x] Phase 0: Infrastructure (Docker, Django, Vue, PostgreSQL)
 - [x] Phase 1: Google OAuth Login
 - [x] Phase 2: GitHub OAuth & Repository Selection
 - [x] Phase 3: Webhook Subscription & Receiver
+- [x] Phase 4: OAuth Scope Upgrade, Webhook Management & Event Visibility
 
 ## Project Overview
 
@@ -15,7 +16,7 @@ A full-stack application integrating Django + DRF backend with Vue 3 + TypeScrip
 - **Frontend**: Vue 3 + TypeScript with Vite
 - **Database**: PostgreSQL
 - **Auth**: Google OAuth (login) + GitHub OAuth (account linking)
-- **Webhooks**: GitHub webhook subscription for push and pull_request events
+- **Webhooks**: GitHub webhook subscription with raw event storage and visibility
 
 ## Prerequisites
 
@@ -48,6 +49,27 @@ A full-stack application integrating Django + DRF backend with Vue 3 + TypeScrip
 4. Click **Register application**
 5. Copy the **Client ID**
 6. Generate and copy a **Client Secret**
+
+### Required OAuth Scopes
+
+The application requests the following scopes during GitHub OAuth:
+
+| Scope | Purpose |
+|-------|---------|
+| `read:user` | Fetch GitHub user profile (username, ID) |
+| `repo` | Access repository metadata and list repositories |
+| `admin:repo_hook` | Create, read, and delete webhooks on repositories |
+
+### Re-authorization Flow
+
+If a user linked their GitHub account before the webhook scope was added, they may be missing the `admin:repo_hook` scope. The UI will:
+
+1. Detect the missing scope
+2. Display a warning message
+3. Provide a "Re-authorize GitHub" button
+4. Redirect through OAuth with `prompt=consent` to force scope re-approval
+
+This ensures users always have the permissions needed for full functionality.
 
 ## Quick Start
 
@@ -107,16 +129,17 @@ A full-stack application integrating Django + DRF backend with Vue 3 + TypeScrip
 
 ### GitHub OAuth
 - **GET** `/api/github/oauth/url/`
-  - Query: `?user_id=1`
+  - Query: `?user_id=1` or `?user_id=1&force_reauth=true`
+  - Use `force_reauth=true` to force re-authorization with new scopes
   - Returns: `{ "url": "https://github.com/login/oauth/authorize?..." }`
 
 - **POST** `/api/github/oauth/callback/`
   - Request: `{ "code": "github-code", "user_id": 1 }`
-  - Response: `{ "username": "octocat", "github_user_id": 123 }`
+  - Response: `{ "username": "octocat", "github_user_id": 123, "scopes": [...], "has_webhook_scope": true }`
 
 - **GET** `/api/github/status/`
   - Query: `?user_id=1`
-  - Response: `{ "linked": true, "username": "octocat", "selected_repo": {...} }`
+  - Response: `{ "linked": true, "username": "octocat", "scopes": [...], "has_webhook_scope": true, "selected_repo": {...} }`
 
 ### GitHub Repositories
 - **GET** `/api/github/repos/`
@@ -128,10 +151,21 @@ A full-stack application integrating Django + DRF backend with Vue 3 + TypeScrip
   - Response: `{ "id": 123, "name": "repo", "full_name": "user/repo", "html_url": "...", "webhook_created": true }`
 
 ### GitHub Webhooks
+- **POST** `/api/github/webhooks/setup/`
+  - Request: `{ "user_id": 1 }`
+  - Creates or reuses a webhook for the selected repository
+  - Returns `403` if missing `admin:repo_hook` scope
+  - Response: `{ "status": "created|exists|reused", "webhook_id": 123, "message": "..." }`
+
+- **GET** `/api/github/webhooks/events/`
+  - Query: `?user_id=1`
+  - Returns raw webhook events for the selected repository
+  - Response: `{ "events": [{ "id": 1, "event_type": "push", "delivery_id": "...", "payload": {...}, "received_at": "..." }] }`
+
 - **POST** `/api/github/webhooks/`
-  - Receives GitHub webhook events
+  - Receives GitHub webhook events (external endpoint)
   - Validates `X-Hub-Signature-256` header
-  - Logs event summary
+  - Stores raw payload in database (idempotent by delivery_id)
   - Returns: `{ "status": "received" }`
 
 ## Webhooks (Phase 3)
@@ -152,15 +186,20 @@ A full-stack application integrating Django + DRF backend with Vue 3 + TypeScrip
 
 > **Note**: There is no separate "merge" event in GitHub. Merges are detected via `pull_request` events where `action=closed` and `merged=true`.
 
-### Event Processing
+### Event Storage & Processing
 
-⚠️ **Events are NOT processed** — they are only:
+⚠️ **Events are stored but NOT processed** — they are:
 - Validated (signature check)
 - Parsed (extract event type and summary)
+- Stored as raw JSON in the database
 - Logged
 - Acknowledged (200 OK)
 
-This is intentional for Phase 3. Event processing would be added in a future phase.
+**Why events are not processed:**
+- This application demonstrates webhook integration, not business logic
+- Raw event storage allows future flexibility
+- Processing would require background jobs and additional infrastructure
+- The focus is on correct integration: OAuth scopes, signature validation, idempotent storage
 
 ### Local Testing with ngrok
 
@@ -247,6 +286,7 @@ All incoming webhooks are validated using HMAC SHA-256:
 | github_user_id | BigInt (UK) | GitHub's user ID            |
 | username       | String      | GitHub username             |
 | access_token   | String      | OAuth access token (secret) |
+| scopes         | JSON Array  | Granted OAuth scopes        |
 | created_at     | DateTime    | Record creation time        |
 | updated_at     | DateTime    | Last update time            |
 
@@ -269,6 +309,16 @@ All incoming webhooks are validated using HMAC SHA-256:
 | repository  | FK (1:1)    | Reference to GitHubRepository  |
 | webhook_id  | BigInt (UK) | GitHub-assigned webhook ID     |
 | created_at  | DateTime    | Record creation time           |
+
+### GitHubWebhookEvent
+| Field       | Type         | Description                    |
+|-------------|--------------|--------------------------------|
+| id          | BigInt (PK)  | Auto-generated ID              |
+| repository  | FK           | Reference to GitHubRepository  |
+| event_type  | String       | GitHub event type (push, etc)  |
+| delivery_id | String (UK)  | GitHub delivery ID (unique)    |
+| payload     | JSON         | Raw event payload from GitHub  |
+| received_at | DateTime     | When event was received        |
 
 ## Development
 
@@ -318,7 +368,7 @@ docker compose logs -f backend | grep WEBHOOK
 │   │   ├── urls.py
 │   │   └── wsgi.py
 │   └── core/
-│       ├── models.py      # AppUser, GitHubAccount, GitHubRepository, GitHubWebhook
+│       ├── models.py      # AppUser, GitHubAccount, GitHubRepository, GitHubWebhook, GitHubWebhookEvent
 │       ├── urls.py
 │       └── views.py       # Auth, GitHub API, Webhook views
 ├── frontend/
@@ -339,4 +389,5 @@ All phases implemented:
 1. ✅ **Phase 0**: Docker infrastructure with Django, Vue, PostgreSQL
 2. ✅ **Phase 1**: Google OAuth login with user persistence
 3. ✅ **Phase 2**: GitHub OAuth account linking and repository selection
-4. ✅ **Phase 3**: GitHub webhook subscription and receiver (no event processing)
+4. ✅ **Phase 3**: GitHub webhook subscription and receiver
+5. ✅ **Phase 4**: OAuth scope upgrade, webhook management UI, and raw event visibility

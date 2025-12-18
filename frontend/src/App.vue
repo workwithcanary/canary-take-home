@@ -5,13 +5,17 @@ import {
   checkHealth,
   authenticateWithGoogle,
   getGitHubOAuthURL,
+  getGitHubOAuthURLForReauth,
   exchangeGitHubCode,
   getGitHubStatus,
   getGitHubRepos,
   selectGitHubRepo,
+  setupWebhook,
+  getWebhookEvents,
   type User,
   type GitHubStatus,
   type GitHubRepo,
+  type WebhookEvent,
 } from './api'
 
 const backendStatus = ref<string>('Checking...')
@@ -28,8 +32,16 @@ const isLinkingGitHub = ref<boolean>(false)
 const isLoadingRepos = ref<boolean>(false)
 const isSelectingRepo = ref<boolean>(false)
 
+const webhookEvents = ref<WebhookEvent[]>([])
+const isLoadingEvents = ref<boolean>(false)
+const isSettingUpWebhook = ref<boolean>(false)
+const webhookError = ref<string>('')
+const expandedEventId = ref<number | null>(null)
+
 const isGitHubLinked = computed(() => githubStatus.value?.linked ?? false)
+const hasWebhookScope = computed(() => githubStatus.value?.has_webhook_scope ?? false)
 const selectedRepo = computed(() => githubStatus.value?.selected_repo ?? null)
+const isWebhookActive = computed(() => githubStatus.value?.selected_repo?.webhook_active ?? false)
 
 const loadUserFromStorage = () => {
   const stored = localStorage.getItem('user')
@@ -115,6 +127,76 @@ const handleLinkGitHub = async () => {
     }
     isLinkingGitHub.value = false
   }
+}
+
+const handleReauthorizeGitHub = async () => {
+  if (!user.value) return
+  
+  githubError.value = ''
+  isLinkingGitHub.value = true
+  
+  try {
+    const url = await getGitHubOAuthURLForReauth(user.value.id)
+    window.location.href = url
+  } catch (error: unknown) {
+    console.error('Failed to get GitHub re-auth URL:', error)
+    if (error && typeof error === 'object' && 'response' in error) {
+      const axiosError = error as { response?: { data?: { error?: string } } }
+      githubError.value = axiosError.response?.data?.error || 'Failed to start GitHub re-authorization'
+    } else {
+      githubError.value = 'Failed to start GitHub re-authorization'
+    }
+    isLinkingGitHub.value = false
+  }
+}
+
+const handleSetupWebhook = async () => {
+  if (!user.value) return
+  
+  webhookError.value = ''
+  isSettingUpWebhook.value = true
+  
+  try {
+    await setupWebhook(user.value.id)
+    await fetchGitHubStatus()
+    await fetchWebhookEvents()
+  } catch (error: unknown) {
+    console.error('Failed to setup webhook:', error)
+    if (error && typeof error === 'object' && 'response' in error) {
+      const axiosError = error as { response?: { data?: { error?: string; requires_reauth?: boolean } } }
+      if (axiosError.response?.data?.requires_reauth) {
+        webhookError.value = 'Missing webhook permissions. Please re-authorize GitHub.'
+      } else {
+        webhookError.value = axiosError.response?.data?.error || 'Failed to setup webhook'
+      }
+    } else {
+      webhookError.value = 'Failed to setup webhook'
+    }
+  } finally {
+    isSettingUpWebhook.value = false
+  }
+}
+
+const fetchWebhookEvents = async () => {
+  if (!user.value) return
+  
+  isLoadingEvents.value = true
+  
+  try {
+    webhookEvents.value = await getWebhookEvents(user.value.id)
+  } catch (error) {
+    console.error('Failed to fetch webhook events:', error)
+  } finally {
+    isLoadingEvents.value = false
+  }
+}
+
+const toggleEventExpand = (eventId: number) => {
+  expandedEventId.value = expandedEventId.value === eventId ? null : eventId
+}
+
+const formatEventTime = (isoString: string): string => {
+  return new Date(isoString).toLocaleString()
 }
 
 const handleGitHubCallback = async () => {
@@ -206,6 +288,12 @@ watch(isGitHubLinked, (linked: boolean) => {
   }
 })
 
+watch(isWebhookActive, (active: boolean) => {
+  if (active) {
+    fetchWebhookEvents()
+  }
+})
+
 onMounted(async () => {
   loadUserFromStorage()
   checkBackendHealth()
@@ -213,6 +301,9 @@ onMounted(async () => {
   if (user.value) {
     await fetchGitHubStatus()
     handleGitHubCallback()
+    if (isWebhookActive.value) {
+      fetchWebhookEvents()
+    }
   }
 })
 
@@ -220,6 +311,9 @@ watch(user, async (newUser: User | null) => {
   if (newUser) {
     await fetchGitHubStatus()
     handleGitHubCallback()
+    if (isWebhookActive.value) {
+      fetchWebhookEvents()
+    }
   }
 })
 </script>
@@ -289,11 +383,38 @@ watch(user, async (newUser: User | null) => {
             </div>
           </div>
           
+          <div v-if="!hasWebhookScope" class="scope-warning">
+            <p>⚠️ Missing webhook permissions. Re-authorize to enable webhook creation.</p>
+            <button 
+              @click="handleReauthorizeGitHub"
+              :disabled="isLinkingGitHub"
+              class="reauth-btn"
+            >
+              {{ isLinkingGitHub ? 'Redirecting...' : 'Re-authorize GitHub' }}
+            </button>
+          </div>
+          
           <div v-if="selectedRepo" class="selected-repo">
-            <h3>Selected Repository</h3>
+            <div class="selected-repo-header">
+              <h3>Selected Repository</h3>
+              <span v-if="isWebhookActive" class="webhook-badge active">Webhook Active</span>
+              <span v-else class="webhook-badge inactive">No Webhook</span>
+            </div>
             <a :href="selectedRepo.html_url" target="_blank" class="repo-link">
               {{ selectedRepo.full_name }}
             </a>
+            
+            <div v-if="webhookError" class="error-message webhook-error">{{ webhookError }}</div>
+            
+            <div v-if="!isWebhookActive && hasWebhookScope" class="webhook-setup">
+              <button 
+                @click="handleSetupWebhook"
+                :disabled="isSettingUpWebhook"
+                class="setup-webhook-btn"
+              >
+                {{ isSettingUpWebhook ? 'Setting up...' : 'Setup Webhook' }}
+              </button>
+            </div>
           </div>
           
           <div class="repos-section">
@@ -331,6 +452,39 @@ watch(user, async (newUser: User | null) => {
             
             <p v-else class="no-repos">No public repositories found</p>
           </div>
+          
+          <div v-if="isWebhookActive" class="events-section">
+            <div class="events-header">
+              <h3>Webhook Events</h3>
+              <button @click="fetchWebhookEvents" :disabled="isLoadingEvents" class="refresh-events-btn">
+                {{ isLoadingEvents ? 'Loading...' : 'Refresh' }}
+              </button>
+            </div>
+            
+            <div v-if="isLoadingEvents" class="loading-events">
+              Loading events...
+            </div>
+            
+            <ul v-else-if="webhookEvents.length > 0" class="event-list">
+              <li 
+                v-for="event in webhookEvents" 
+                :key="event.id"
+                class="event-item"
+              >
+                <div class="event-summary" @click="toggleEventExpand(event.id)">
+                  <span class="event-type" :class="event.event_type">{{ event.event_type }}</span>
+                  <span class="event-repo">{{ event.repo_full_name }}</span>
+                  <span class="event-time">{{ formatEventTime(event.received_at) }}</span>
+                  <span class="expand-icon">{{ expandedEventId === event.id ? '▼' : '▶' }}</span>
+                </div>
+                <div v-if="expandedEventId === event.id" class="event-payload">
+                  <pre>{{ JSON.stringify(event.payload, null, 2) }}</pre>
+                </div>
+              </li>
+            </ul>
+            
+            <p v-else class="no-events">No webhook events received yet</p>
+          </div>
         </template>
       </div>
 
@@ -351,7 +505,8 @@ watch(user, async (newUser: User | null) => {
           <li :class="{ completed: !!user }">Google OAuth Login</li>
           <li :class="{ completed: isGitHubLinked }">GitHub Account Linking</li>
           <li :class="{ completed: !!selectedRepo }">Repository Selection</li>
-          <li>Webhook Integration</li>
+          <li :class="{ completed: isWebhookActive }">Webhook Integration</li>
+          <li :class="{ completed: webhookEvents.length > 0 }">Events Received</li>
         </ul>
       </div>
     </main>
@@ -828,5 +983,226 @@ h1 {
 .info-section li.completed::before {
   content: '●';
   color: #00ff88;
+}
+
+.scope-warning {
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+.scope-warning p {
+  color: #ffc107;
+  margin-bottom: 1rem;
+}
+
+.reauth-btn {
+  background: linear-gradient(90deg, #ffc107, #ff9800);
+  border: none;
+  color: #1a1a2e;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.reauth-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(255, 193, 7, 0.3);
+}
+
+.reauth-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.selected-repo-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  justify-content: center;
+}
+
+.webhook-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.webhook-badge.active {
+  background: rgba(0, 255, 136, 0.2);
+  color: #00ff88;
+}
+
+.webhook-badge.inactive {
+  background: rgba(255, 255, 255, 0.1);
+  color: #8892b0;
+}
+
+.webhook-setup {
+  margin-top: 1rem;
+}
+
+.setup-webhook-btn {
+  background: linear-gradient(90deg, #00d9ff, #00ff88);
+  border: none;
+  color: #1a1a2e;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.setup-webhook-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(0, 217, 255, 0.3);
+}
+
+.setup-webhook-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.webhook-error {
+  margin-top: 0.75rem;
+}
+
+.events-section {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.events-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.events-header h3 {
+  font-size: 1rem;
+  color: #8892b0;
+}
+
+.refresh-events-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #8892b0;
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.refresh-events-btn:hover:not(:disabled) {
+  border-color: #00d9ff;
+  color: #00d9ff;
+}
+
+.refresh-events-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.loading-events {
+  text-align: center;
+  color: #8892b0;
+  padding: 2rem;
+}
+
+.event-list {
+  list-style: none;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.event-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+  overflow: hidden;
+}
+
+.event-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.event-summary:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.event-type {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: rgba(0, 217, 255, 0.2);
+  color: #00d9ff;
+}
+
+.event-type.push {
+  background: rgba(0, 255, 136, 0.2);
+  color: #00ff88;
+}
+
+.event-type.pull_request {
+  background: rgba(156, 39, 176, 0.2);
+  color: #ce93d8;
+}
+
+.event-repo {
+  color: #ccd6f6;
+  flex: 1;
+  font-size: 0.9rem;
+}
+
+.event-time {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.expand-icon {
+  color: #64748b;
+  font-size: 0.7rem;
+}
+
+.event-payload {
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 1rem;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.event-payload pre {
+  margin: 0;
+  font-family: 'Fira Code', 'Monaco', monospace;
+  font-size: 0.75rem;
+  color: #8892b0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.no-events {
+  text-align: center;
+  color: #64748b;
+  padding: 2rem;
 }
 </style>

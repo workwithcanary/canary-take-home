@@ -7,6 +7,8 @@ from .views import (
     GitHubStatusView,
     GitHubReposView,
     GitHubRepoSelectView,
+    GitHubWebhookSetupView,
+    GitHubWebhookEventsView,
     GitHubWebhookReceiverView,
 )
 
@@ -18,5 +20,7 @@ urlpatterns = [
     path('github/status/', GitHubStatusView.as_view(), name='github-status'),
     path('github/repos/', GitHubReposView.as_view(), name='github-repos'),
     path('github/repos/select/', GitHubRepoSelectView.as_view(), name='github-repo-select'),
+    path('github/webhooks/setup/', GitHubWebhookSetupView.as_view(), name='github-webhooks-setup'),
+    path('github/webhooks/events/', GitHubWebhookEventsView.as_view(), name='github-webhooks-events'),
     path('github/webhooks/', GitHubWebhookReceiverView.as_view(), name='github-webhooks'),
 ]

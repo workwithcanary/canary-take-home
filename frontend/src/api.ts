@@ -20,7 +20,9 @@ export interface User {
 export interface GitHubStatus {
   linked: boolean
   username: string | null
-  selected_repo: GitHubRepo | null
+  scopes: string[]
+  has_webhook_scope: boolean
+  selected_repo: (GitHubRepo & { webhook_active?: boolean }) | null
 }
 
 export interface GitHubRepo {
@@ -34,6 +36,25 @@ export interface GitHubRepo {
 
 export interface GitHubReposResponse {
   repos: GitHubRepo[]
+}
+
+export interface WebhookSetupResponse {
+  status: 'created' | 'exists' | 'reused'
+  webhook_id: number
+  message: string
+}
+
+export interface WebhookEvent {
+  id: number
+  event_type: string
+  delivery_id: string
+  payload: Record<string, unknown>
+  received_at: string
+  repo_full_name: string
+}
+
+export interface WebhookEventsResponse {
+  events: WebhookEvent[]
 }
 
 export const checkHealth = async (): Promise<HealthResponse> => {
@@ -83,6 +104,27 @@ export const selectGitHubRepo = async (userId: number, repoId: number): Promise<
     repo_id: repoId,
   })
   return response.data
+}
+
+export const getGitHubOAuthURLForReauth = async (userId: number): Promise<string> => {
+  const response = await apiClient.get<{ url: string }>('/api/github/oauth/url/', {
+    params: { user_id: userId, force_reauth: 'true' },
+  })
+  return response.data.url
+}
+
+export const setupWebhook = async (userId: number): Promise<WebhookSetupResponse> => {
+  const response = await apiClient.post<WebhookSetupResponse>('/api/github/webhooks/setup/', {
+    user_id: userId,
+  })
+  return response.data
+}
+
+export const getWebhookEvents = async (userId: number): Promise<WebhookEvent[]> => {
+  const response = await apiClient.get<WebhookEventsResponse>('/api/github/webhooks/events/', {
+    params: { user_id: userId },
+  })
+  return response.data.events
 }
 
 export default apiClient
