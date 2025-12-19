@@ -392,6 +392,16 @@ watch(user, async (newUser: User | null) => {
         
         <template v-if="!isGitHubLinked">
           <p class="github-description">Link your GitHub account to select a repository</p>
+          <div class="github-oauth-note">
+            <p class="note-text">
+              ℹ️ If you've linked before, GitHub may skip the authorization screen. 
+              To see it again, 
+              <a href="https://github.com/settings/applications" target="_blank" class="revoke-link">
+                revoke this app
+              </a>
+              from your GitHub settings first.
+            </p>
+          </div>
           <button 
             @click="handleLinkGitHub" 
             :disabled="isLinkingGitHub"
@@ -697,8 +707,33 @@ h1 {
 
 .github-description {
   color: #8892b0;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
   text-align: center;
+}
+
+.github-oauth-note {
+  background: rgba(255, 217, 61, 0.1);
+  border: 1px solid rgba(255, 217, 61, 0.3);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.note-text {
+  font-size: 0.875rem;
+  color: #ffd93d;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.revoke-link {
+  color: #ffd93d;
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+.revoke-link:hover {
+  color: #ffed4e;
 }
 
 .github-btn {

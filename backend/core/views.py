@@ -94,6 +94,14 @@ class GoogleAuthView(APIView):
 
 
 class GitHubOAuthURLView(APIView):
+    """
+    Generate GitHub OAuth authorization URL.
+    
+    Note: GitHub OAuth doesn't support forcing re-authorization like Google OAuth.
+    If a user has previously authorized the app, GitHub will automatically approve
+    without showing the consent screen. To see the consent screen again, the user
+    must revoke the app from: https://github.com/settings/applications
+    """
     REQUIRED_SCOPES = 'read:user repo admin:repo_hook'
     
     def get(self, request):
@@ -104,6 +112,9 @@ class GitHubOAuthURLView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
+        # Note: GitHub OAuth doesn't support 'prompt=consent' parameter.
+        # The 'force_reauth' flag is kept for API consistency but has no effect.
+        # Users must revoke the app from GitHub settings to see consent screen again.
         force_reauth = request.query_params.get('force_reauth', 'false') == 'true'
         
         params = {
@@ -113,8 +124,11 @@ class GitHubOAuthURLView(APIView):
             'state': request.query_params.get('user_id', ''),
         }
         
+        # GitHub doesn't support prompt parameter, but we keep this for documentation
+        # and potential future support
         if force_reauth:
-            params['prompt'] = 'consent'
+            # This parameter is ignored by GitHub but kept for API consistency
+            pass
         
         authorize_url = f'{GITHUB_AUTHORIZE_URL}?{urlencode(params)}'
         return Response({'url': authorize_url})
