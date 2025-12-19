@@ -1,0 +1,28 @@
+from django.urls import path
+from .views import (
+    HealthCheckView,
+    GoogleAuthView,
+    GitHubOAuthURLView,
+    GitHubOAuthCallbackView,
+    GitHubStatusView,
+    GitHubUnlinkView,
+    GitHubReposView,
+    GitHubRepoSelectView,
+    GitHubWebhookSetupView,
+    GitHubWebhookEventsView,
+    GitHubWebhookReceiverView,
+)
+
+urlpatterns = [
+    path('health/', HealthCheckView.as_view(), name='health-check'),
+    path('auth/google/', GoogleAuthView.as_view(), name='google-auth'),
+    path('github/oauth/url/', GitHubOAuthURLView.as_view(), name='github-oauth-url'),
+    path('github/oauth/callback/', GitHubOAuthCallbackView.as_view(), name='github-oauth-callback'),
+    path('github/status/', GitHubStatusView.as_view(), name='github-status'),
+    path('github/unlink/', GitHubUnlinkView.as_view(), name='github-unlink'),
+    path('github/repos/', GitHubReposView.as_view(), name='github-repos'),
+    path('github/repos/select/', GitHubRepoSelectView.as_view(), name='github-repo-select'),
+    path('github/webhooks/setup/', GitHubWebhookSetupView.as_view(), name='github-webhooks-setup'),
+    path('github/webhooks/events/', GitHubWebhookEventsView.as_view(), name='github-webhooks-events'),
+    path('github/webhooks/', GitHubWebhookReceiverView.as_view(), name='github-webhooks'),
+]
