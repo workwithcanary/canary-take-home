@@ -91,6 +91,13 @@ export const getGitHubStatus = async (userId: number): Promise<GitHubStatus> => 
   return response.data
 }
 
+export const unlinkGitHub = async (userId: number): Promise<{ message: string }> => {
+  const response = await apiClient.delete<{ message: string }>('/api/github/unlink/', {
+    data: { user_id: userId },
+  })
+  return response.data
+}
+
 export const getGitHubRepos = async (userId: number): Promise<GitHubRepo[]> => {
   const response = await apiClient.get<GitHubReposResponse>('/api/github/repos/', {
     params: { user_id: userId },

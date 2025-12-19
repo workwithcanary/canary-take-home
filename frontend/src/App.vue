@@ -8,6 +8,7 @@ import {
   getGitHubOAuthURLForReauth,
   exchangeGitHubCode,
   getGitHubStatus,
+  unlinkGitHub,
   getGitHubRepos,
   selectGitHubRepo,
   setupWebhook,
@@ -147,6 +148,37 @@ const handleReauthorizeGitHub = async () => {
       githubError.value = 'Failed to start GitHub re-authorization'
     }
     isLinkingGitHub.value = false
+  }
+}
+
+const isUnlinkingGitHub = ref<boolean>(false)
+
+const handleUnlinkGitHub = async () => {
+  if (!user.value) return
+  
+  if (!confirm('Are you sure you want to unlink your GitHub account? This will remove all GitHub data including repositories and webhooks.')) {
+    return
+  }
+  
+  githubError.value = ''
+  isUnlinkingGitHub.value = true
+  
+  try {
+    await unlinkGitHub(user.value.id)
+    githubStatus.value = null
+    githubRepos.value = []
+    webhookEvents.value = []
+    await fetchGitHubStatus()
+  } catch (error: unknown) {
+    console.error('Failed to unlink GitHub:', error)
+    if (error && typeof error === 'object' && 'response' in error) {
+      const axiosError = error as { response?: { data?: { error?: string } } }
+      githubError.value = axiosError.response?.data?.error || 'Failed to unlink GitHub account'
+    } else {
+      githubError.value = 'Failed to unlink GitHub account'
+    }
+  } finally {
+    isUnlinkingGitHub.value = false
   }
 }
 
@@ -381,6 +413,13 @@ watch(user, async (newUser: User | null) => {
               <span>@{{ githubStatus?.username }}</span>
               <span class="linked-badge">Linked</span>
             </div>
+            <button 
+              @click="handleUnlinkGitHub"
+              :disabled="isUnlinkingGitHub"
+              class="unlink-github-btn"
+            >
+              {{ isUnlinkingGitHub ? 'Unlinking...' : 'Sign Out' }}
+            </button>
           </div>
           
           <div v-if="!hasWebhookScope" class="scope-warning">
@@ -701,14 +740,18 @@ h1 {
 }
 
 .github-linked {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 1.5rem;
+  gap: 1rem;
 }
 
 .github-user {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  justify-content: center;
+  flex: 1;
   color: #ccd6f6;
 }
 
@@ -719,6 +762,30 @@ h1 {
   border-radius: 4px;
   font-size: 0.75rem;
   font-weight: 600;
+}
+
+.unlink-github-btn {
+  background: rgba(255, 107, 107, 0.2);
+  border: 1px solid rgba(255, 107, 107, 0.4);
+  color: #ff6b6b;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.unlink-github-btn:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.3);
+  border-color: rgba(255, 107, 107, 0.6);
+  transform: translateY(-1px);
+}
+
+.unlink-github-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .selected-repo {

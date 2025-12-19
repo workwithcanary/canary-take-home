@@ -277,6 +277,45 @@ class GitHubStatusView(APIView):
             })
 
 
+class GitHubUnlinkView(APIView):
+    """Unlink GitHub account and delete all associated data."""
+    
+    def delete(self, request):
+        user_id = request.data.get('user_id')
+        
+        if not user_id:
+            return Response(
+                {'error': 'user_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = AppUser.objects.get(id=user_id)
+        except AppUser.DoesNotExist:
+            return Response(
+                {'error': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            github_account = user.github_account
+            # Delete GitHubAccount, which will cascade delete:
+            # - GitHubRepository (via CASCADE)
+            # - GitHubWebhook (via CASCADE from repository)
+            # - GitHubWebhookEvent (via CASCADE from repository)
+            github_account.delete()
+            logger.info(f'GitHub account unlinked for user {user_id}')
+            return Response(
+                {'message': 'GitHub account unlinked successfully'},
+                status=status.HTTP_200_OK
+            )
+        except GitHubAccount.DoesNotExist:
+            return Response(
+                {'error': 'GitHub account not linked'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
 class GitHubReposView(APIView):
     def get(self, request):
         user_id = request.query_params.get('user_id')
